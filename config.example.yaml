@@ -1,0 +1,9 @@
+proxies:
+  - listen: "0.0.0.0:7789"
+    target: "https://www.google.com"
+    # 留空直连；按需改为 socks5://127.0.0.1:1080
+    proxy: ""
+  - listen: "0.0.0.0:7790"
+    target: "https://www.bing.com"
+    # 也支持 http://127.0.0.1:3128 或 https://代理地址:端口
+    proxy: ""
