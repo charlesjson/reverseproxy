@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"encoding/binary"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -67,7 +68,7 @@ func TestHTTPUpstreamProxy(t *testing.T) {
 			if secure {
 				target = mustURL(t, destination.URL)
 			}
-			handler := newProxyWithTransport(target, proxyURL)
+			handler := newProxy(proxyConfig{Target: target, Proxy: proxyURL, ResponseHeaderTimeout: defaultResponseHeaderTimeout}, log.New(io.Discard, "", 0))
 			transport := handler.Transport.(*http.Transport)
 			if secure {
 				transport.TLSClientConfig = &tls.Config{RootCAs: destination.Client().Transport.(*http.Transport).TLSClientConfig.RootCAs}
@@ -166,7 +167,7 @@ func TestSOCKSUpstreamProxy(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			handler := newProxyWithTransport(mustURL(t, "http://destination.invalid"), proxyURL)
+			handler := newProxy(proxyConfig{Target: mustURL(t, "http://destination.invalid"), Proxy: proxyURL, ResponseHeaderTimeout: defaultResponseHeaderTimeout}, log.New(io.Discard, "", 0))
 			defer handler.Transport.(*http.Transport).CloseIdleConnections()
 			reverse := httptest.NewServer(handler)
 			defer reverse.Close()
@@ -192,14 +193,14 @@ func TestProxyConfiguration(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg, err := loadConfig([]string{"-config", path}, io.Discard)
-	if err != nil || cfg.Proxies[0].Proxy != "socks5://localhost:1080" || cfg.Proxies[1].Proxy != "http://localhost:3128" {
+	if err != nil || cfg.Proxies[0].Proxy.String() != "socks5://localhost:1080" || cfg.Proxies[1].Proxy.String() != "http://localhost:3128" {
 		t.Fatalf("cfg=%+v err=%v", cfg, err)
 	}
 	if _, err := loadConfig([]string{"-config", path, "-proxy", "http://localhost:3128"}, io.Discard); err == nil {
 		t.Error("accepted mixed multi-target config and proxy flag")
 	}
 	cfg, err = loadConfig([]string{"-proxy", "http://localhost:3128", ":7789", "https://example.com"}, io.Discard)
-	if err != nil || cfg.Proxies[0].Proxy != "http://localhost:3128" {
+	if err != nil || cfg.Proxies[0].Proxy.String() != "http://localhost:3128" {
 		t.Fatalf("cfg=%+v err=%v", cfg, err)
 	}
 	for _, raw := range []string{"socks4://localhost:1080", "http://", "http://user:secret@localhost:99999", "http://localhost/path", "http://localhost?x=y"} {
@@ -211,7 +212,7 @@ func TestProxyConfiguration(t *testing.T) {
 		}
 	}
 	t.Setenv("HTTP_PROXY", "http://environment.invalid:3128")
-	transport := newProxy(mustURL(t, "http://example.com")).Transport.(*http.Transport)
+	transport := newTestProxy(t, mustURL(t, "http://example.com")).Transport.(*http.Transport)
 	if transport.Proxy != nil {
 		t.Error("direct connection unexpectedly uses environment proxy")
 	}
