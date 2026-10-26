@@ -17,6 +17,7 @@ import (
 )
 
 type fileProxyConfig struct {
+	Mode                  string `yaml:"mode"`
 	Listen                string `yaml:"listen"`
 	Target                string `yaml:"target"`
 	Proxy                 string `yaml:"proxy"`
@@ -29,6 +30,7 @@ type fileConfig struct {
 }
 
 type proxyConfig struct {
+	Mode                  string
 	Listen                string
 	Target                *url.URL
 	Proxy                 *url.URL
@@ -36,6 +38,11 @@ type proxyConfig struct {
 }
 
 const defaultResponseHeaderTimeout = 30 * time.Second
+
+const (
+	modeHTTP = "http"
+	modeRaw  = "raw"
+)
 
 type config struct {
 	Proxies []proxyConfig
@@ -47,6 +54,7 @@ func loadConfig(args []string, output io.Writer) (config, error) {
 	flags := flag.NewFlagSet("reverseproxy", flag.ContinueOnError)
 	flags.SetOutput(output)
 	path := flags.String("config", "", "YAML 配置文件路径")
+	mode := flags.String("mode", "", "代理模式：http（默认）或 raw（原始报文透传）")
 	listen := flags.String("listen", "", "监听地址，例如 0.0.0.0:7789")
 	proxy := flags.String("proxy", "", "上游代理 URL，支持 http/https/socks5/socks5h；为空时直连")
 	headerTimeout := flags.String("response-header-timeout", "", "等待上游响应头的超时，例如 30s、500ms；默认 30s，0s 关闭")
@@ -79,7 +87,7 @@ func loadConfig(args []string, output io.Writer) (config, error) {
 			return config{}, fmt.Errorf("解析 YAML 字段: %w", err)
 		}
 		_, hasProxies = fields["proxies"]
-		for _, name := range []string{"listen", "target", "proxy", "response_header_timeout"} {
+		for _, name := range []string{"mode", "listen", "target", "proxy", "response_header_timeout"} {
 			if _, ok := fields[name]; ok {
 				hasSingleFields = true
 			}
@@ -88,7 +96,7 @@ func loadConfig(args []string, output io.Writer) (config, error) {
 	hasSingleFlags := false
 	hasOtherSingleFlags := false
 	flags.Visit(func(f *flag.Flag) {
-		if f.Name == "proxy" || f.Name == "response-header-timeout" {
+		if f.Name == "mode" || f.Name == "proxy" || f.Name == "response-header-timeout" {
 			hasOtherSingleFlags = true
 		}
 		if f.Name == "listen" || f.Name == "target" {
@@ -100,6 +108,8 @@ func loadConfig(args []string, output io.Writer) (config, error) {
 	}
 	flags.Visit(func(f *flag.Flag) {
 		switch f.Name {
+		case "mode":
+			cfg.Mode = *mode
 		case "listen":
 			cfg.Listen = *listen
 		case "target":
@@ -129,6 +139,12 @@ func loadConfig(args []string, output io.Writer) (config, error) {
 	resolved := config{Proxies: make([]proxyConfig, 0, len(cfg.Proxies))}
 	seen := make(map[string]bool)
 	for i, entry := range cfg.Proxies {
+		if entry.Mode == "" {
+			entry.Mode = modeHTTP
+		}
+		if entry.Mode != modeHTTP && entry.Mode != modeRaw {
+			return config{}, fmt.Errorf("代理 %d: mode 必须是 http 或 raw", i+1)
+		}
 		if entry.Listen == "" || entry.Target == "" {
 			return config{}, fmt.Errorf("代理 %d: 必须提供 listen 和 target", i+1)
 		}
@@ -138,6 +154,17 @@ func loadConfig(args []string, output io.Writer) (config, error) {
 		target, err := parseTarget(entry.Target)
 		if err != nil {
 			return config{}, fmt.Errorf("代理 %d: %w", i+1, err)
+		}
+		if entry.Mode == modeRaw {
+			if (target.EscapedPath() != "" && target.EscapedPath() != "/") || target.RawQuery != "" || target.ForceQuery {
+				return config{}, fmt.Errorf("代理 %d: raw 模式的 target 只能指定协议、主机和端口，不能包含路径前缀或查询参数", i+1)
+			}
+			if target.Port() != "" {
+				port, err := strconv.Atoi(target.Port())
+				if err != nil || port < 1 || port > 65535 {
+					return config{}, fmt.Errorf("代理 %d: raw 目标端口必须在 1 到 65535 之间", i+1)
+				}
+			}
 		}
 		proxy, err := parseProxy(entry.Proxy)
 		if err != nil {
@@ -154,7 +181,7 @@ func loadConfig(args []string, output io.Writer) (config, error) {
 			return config{}, fmt.Errorf("重复的监听地址: %s", entry.Listen)
 		}
 		seen[entry.Listen] = true
-		resolved.Proxies = append(resolved.Proxies, proxyConfig{Listen: entry.Listen, Target: target, Proxy: proxy, ResponseHeaderTimeout: timeout})
+		resolved.Proxies = append(resolved.Proxies, proxyConfig{Mode: entry.Mode, Listen: entry.Listen, Target: target, Proxy: proxy, ResponseHeaderTimeout: timeout})
 	}
 	return resolved, nil
 }

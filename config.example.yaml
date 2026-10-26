@@ -1,12 +1,20 @@
 proxies:
-  - listen: "0.0.0.0:7789"
+  - mode: "http"
+    listen: "0.0.0.0:7789"
     target: "https://www.google.com"
     # 留空直连；按需改为 socks5://127.0.0.1:1080
     proxy: ""
     # 发送完请求后等待响应头的时间；0s 关闭，不限制响应体传输时间
     response_header_timeout: "30s"
-  - listen: "0.0.0.0:7790"
+  - mode: "http"
+    listen: "0.0.0.0:7790"
     target: "https://www.bing.com"
     # 也支持 http://127.0.0.1:3128 或 https://代理地址:端口
     proxy: ""
     response_header_timeout: "30s"
+
+  # 需要 raw 透传时取消下面的注释；客户端须自行设置目标 Host。
+  # - mode: "raw"
+  #   listen: "127.0.0.1:7791"
+  #   target: "https://www.google.com"
+  #   proxy: ""

@@ -16,10 +16,17 @@ import (
 	"time"
 )
 
+type managedServer interface {
+	Serve(net.Listener) error
+	Shutdown(context.Context) error
+	Close() error
+}
+
 type proxyServer struct {
-	server   *http.Server
+	server   managedServer
 	listener net.Listener
 	target   *url.URL
+	mode     string
 }
 
 // 先绑定所有端口；任何一项失败时释放已绑定的端口。
@@ -37,10 +44,15 @@ func bindProxies(entries []proxyConfig, logger *log.Logger) (servers []proxyServ
 		if listenErr != nil {
 			return servers, fmt.Errorf("代理 %d 监听 %s 失败: %w", i+1, entry.Listen, listenErr)
 		}
-		servers = append(servers, proxyServer{
-			server:   &http.Server{Handler: newProxy(entry, logger), ErrorLog: logger, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 90 * time.Second},
-			listener: listener, target: entry.Target,
-		})
+		var server managedServer
+		mode := modeHTTP
+		if entry.Mode == modeRaw {
+			mode = modeRaw
+			server = newRawServer(entry, logger)
+		} else {
+			server = &http.Server{Handler: newProxy(entry, logger), ErrorLog: logger, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 90 * time.Second}
+		}
+		servers = append(servers, proxyServer{server: server, listener: listener, target: entry.Target, mode: mode})
 	}
 	return servers, nil
 }
@@ -49,7 +61,7 @@ func serveProxies(ctx context.Context, servers []proxyServer, logger *log.Logger
 	done := make(chan error, len(servers))
 	for _, p := range servers {
 		go func(p proxyServer) { done <- p.server.Serve(p.listener) }(p)
-		logger.Printf("反向代理已启动: http://%s -> %s", p.listener.Addr(), p.target)
+		logger.Printf("反向代理已启动: mode=%s http://%s -> %s", p.mode, p.listener.Addr(), p.target)
 	}
 	var serveErr error
 	select {
